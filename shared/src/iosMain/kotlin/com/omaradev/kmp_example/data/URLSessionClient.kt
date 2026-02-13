@@ -6,38 +6,51 @@ import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
 class URLSessionClient {
-    suspend fun fetch(baseUrl: String): String {
+
+    suspend fun fetch(
+        baseUrl: String,
+        headers: Map<String, String> = emptyMap()
+    ): String = suspendCoroutine { continuation ->
+
         val url = NSURL(string = baseUrl)
-        return suspendCoroutine { continuation ->
-            val task = NSURLSession.sharedSession.dataTaskWithURL(url = url) { data: NSData?, _, error ->
-                when {
-                    error != null -> {
-                        NSLog("🔴 Error: ${error.localizedDescription}")
-                        continuation.resumeWithException(Exception(error.localizedDescription))
-                    }
-                    data == null -> {
-                        NSLog("🔴 No data received")
-                        continuation.resumeWithException(Exception("No data received"))
-                    }
-                    else -> {
-                        val nsString = NSString.create(
-                            data = data,
-                            encoding = NSUTF8StringEncoding
+
+        val request = NSMutableURLRequest.requestWithURL(url).apply {
+            HTTPMethod = "GET"
+            setValue("application/json", forHTTPHeaderField = "accept")
+            headers.forEach { (k, v) -> setValue(v, forHTTPHeaderField = k) }
+        }
+
+        val task = NSURLSession.sharedSession.dataTaskWithRequest(request) { data, response, error ->
+            when {
+                error != null -> {
+                    continuation.resumeWithException(Exception(error.localizedDescription))
+                }
+
+                response !is NSHTTPURLResponse -> {
+                    continuation.resumeWithException(Exception("Invalid response"))
+                }
+
+                response.statusCode.toInt() !in 200..299 -> {
+                    continuation.resumeWithException(
+                        Exception("HTTP ${response.statusCode}")
+                    )
+                }
+
+                data == null -> {
+                    continuation.resumeWithException(Exception("No data received"))
+                }
+
+                else -> {
+                    val text = NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString()
+                        ?: return@dataTaskWithRequest continuation.resumeWithException(
+                            Exception("Failed to decode data as UTF-8")
                         )
 
-                        if (nsString == null) {
-                            NSLog("🔴 Failed to convert data to string")
-                            continuation.resumeWithException(Exception("Failed to decode data"))
-                        } else {
-                            val json = nsString.toString()
-                            NSLog("✅ Success: ${json.length} characters")
-                            continuation.resume(json)
-                        }
-                    }
+                    continuation.resume(text)
                 }
             }
-
-            task.resume()
         }
+
+        task.resume()
     }
 }
